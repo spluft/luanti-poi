@@ -849,7 +849,7 @@ end -- poi.split_pos_cat()
 function poi.combine_pos_cat(position, category, dir)
 
 	local dirStr = ""
-	if dir ~= nil and dir.pitch ~= null and dir.yaw ~= null then
+	if dir ~= nil and dir.pitch ~= nil and dir.yaw ~= nil then
 		dirStr = ", (" .. tonumber(dir.pitch) .. "," .. tonumber(dir.yaw) .. ")"
 	end
 
