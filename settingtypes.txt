@@ -1,0 +1,3 @@
+
+poi.perplayer_global (Comma-separated names of shared global POIs visible to everyone) string init_spawn
+poi.perplayer_default_owner (Owner assigned to legacy unprefixed POIs on first load) string spluft

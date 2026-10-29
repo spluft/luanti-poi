@@ -37,11 +37,19 @@ local orange = '#FF6700'
 local none = 99
 
 -- Options for Categories and Gui management
-local call_list = {}   -- important array to find jump station in lists reduced by categories
-local lastchoice = ""  -- last choosen destination from gui by single_click (android support and useful for extended gui in the future)
-local selected_category = 0
-local choosen_name = 0
-local selected_point = ""
+-- FIX(poi-perplayer): GUI selection state is per-player. Upstream used single
+-- globals shared by every player that had the form open: with two players (or one
+-- player with both windows) the last click of either clobbered the other's
+-- selection, so rename/set/move/delete acted on a wrong or empty POI.
+local gui_state = {}   -- [player_name] = {call_list, lastchoice, selected_category, choosen_name, selected_point}
+local function gstate(name)
+	local st = gui_state[name]
+	if not st then
+		st = { call_list = {}, lastchoice = "", selected_category = 0, choosen_name = 0, selected_point = "" }
+		gui_state[name] = st
+	end
+	return st
+end
 local drop_down = 0
 local catlist = ""
 
@@ -297,7 +305,7 @@ function poi.jump(name, poi_name)
 	Position, _, direction = poi.split_pos_cat(Position)		-- Extract the Position
 
 	local player = minetest.get_player_by_name(name)
-	lastchoice = ""                                 -- set lastchoice back to zero
+	gstate(name).lastchoice = ""                     -- set lastchoice back to zero (per player)
 
 	poi.play_soundeffect(name, "teleport") -- Play's a Sound
 	player:setpos(minetest.string_to_pos(Position)) -- Move Player to Point
@@ -321,6 +329,8 @@ end -- poi.jump()
 
 -- shows gui with all available PoIs
 function poi.gui(player_name, showup, main)
+	local gs = gstate(player_name)
+	gs.call_list = {}     -- rebuild fully every render; category-filtered lists shrink
 	local list = ""
 	local showcat =  ""
 	local cat
@@ -345,7 +355,7 @@ function poi.gui(player_name, showup, main)
 
 	    end
 	    count = count +1
-	    call_list[count] = key  -- makes it easier to find jump point
+	    gs.call_list[count] = key  -- makes it easier to find jump point
 	  else
 	    drop_down = poi.get_categorienumber(showup)
 	    --showcat = "label[0.6,0.4;Category is: "..showup.."]" -- show choosen categorie in gui ##not needed anymore
@@ -360,7 +370,7 @@ function poi.gui(player_name, showup, main)
 
 	      end
 	      count = count +1
-	      call_list[count] = key  -- makes it easier to find jump point
+	      gs.call_list[count] = key  -- makes it easier to find jump point
 	    end
 	  end
 
@@ -386,11 +396,11 @@ function poi.gui(player_name, showup, main)
 	else
 	      minetest.show_formspec(player_name,"minetest_poi:manager",                            -- The management gui for people with poi priv
 				      "size[7,9]" ..
-				      "textlist[0.4,0;3,5;maname;"..list..";"..choosen_name..";false]"..
-				      "textlist[4,0;2,2;madname;"..catlist..";"..selected_category..";false]"..
+				      "textlist[0.4,0;3,5;maname;"..list..";"..gs.choosen_name..";false]"..
+				      "textlist[4,0;2,2;madname;"..catlist..";"..gs.selected_category..";false]"..
 				      "button[4,2.5;2,1;reload;" .. S("Reload") .. "]" ..
 				      "button[4,3.5;2,1;validate;" .. S("Validate") .. "]"..
-				      "field[0.3,5.4;7,1;managename;                                                                                      - ".. S("Enter Name").." -;"..selected_point.."]"..
+				      "field[0.3,5.4;7,1;managename;                                                                                      - ".. S("Enter Name").." -;"..gs.selected_point.."]"..
 				      "button[0.4,6;6,1;set;" .. S("Set Point or change category") .. "]"..
 				      "button[0.4,7;2,1;rename;" .. S("Rename") .. "]"..
 				      "button[2.4,7;2,1;move;" .. S("Move") .. "]"..
@@ -404,20 +414,21 @@ end -- poi.gui()
 -- Callback for formspec
 minetest.register_on_player_receive_fields(function(player, formname, fields)
 	if formname == "minetest_poi:thegui" and player then -- The form name and player must be online
-
+		local pname = player:get_player_name()
+		local gs = gstate(pname)
 
 		local event = minetest.explode_textlist_event(fields.name)  -- get values of what was clicked
 
 
 		if fields.poiexit then
-			lastchoice = nil
-			choosen_name = 0
-			selected_point = ""
+			gs.lastchoice = nil
+			gs.choosen_name = 0
+			gs.selected_point = ""
 			return false
 		end
 
 		if fields.poishowall then
-		    lastchoice = nil
+		    gs.lastchoice = nil
 		    poi.gui(player:get_player_name(), nil, true)
 		    return false
 		end
@@ -428,14 +439,14 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
 		end
 
 
-		if fields.poitelme and lastchoice ~= "" then                -- single click and go-Button is much easier for tablet users
-		    poi.jump(player:get_player_name(), lastchoice)
+		if fields.poitelme and gs.lastchoice ~= "" then                -- single click and go-Button is much easier for tablet users
+		    poi.jump(player:get_player_name(), gs.lastchoice)
 		    return false
 		end
 
 
 		if (event.type == "CHG") and event.index then              -- save the last choosen PoI by singleclick
-		    lastchoice = call_list[event.index]
+		    gs.lastchoice = gs.call_list[event.index]
 		end
 
 
@@ -445,7 +456,7 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
 
 
 		if (event.type == "DCL") then               -- DCL =doubleclick CHG = leftclick single   by minetest definition
-		   poi.jump(player:get_player_name(), call_list[event.index])
+		   poi.jump(player:get_player_name(), gs.call_list[event.index])
 		  return false
 		end -- if event.type
 
@@ -454,23 +465,23 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
 	end -- if formname
 
 	if formname == "minetest_poi:manager" and player then -- The form name and player must be online
-
-		local youaretheboss = minetest.get_player_privs(player:get_player_name()).server
+		local pname = player:get_player_name()
+		local gs = gstate(pname)
 		local event = minetest.explode_textlist_event(fields.maname)  -- get values of what was clicked in PoI
 		local catevent = minetest.explode_textlist_event(fields.madname)  -- get values of what was clicked in Categories
 
 		if fields.goback then
-			selected_category = 0
-			choosen_name = 0
-			selected_point = ""
+			gs.selected_category = 0
+			gs.choosen_name = 0
+			gs.selected_point = ""
 			poi.gui(player:get_player_name(), nil, true)
 			return false
 		end
 
 		if fields.doexit then
-			selected_category = 0
-			choosen_name = 0
-			selected_point = ""
+			gs.selected_category = 0
+			gs.choosen_name = 0
+			gs.selected_point = ""
 			return false
 		end
 
@@ -485,48 +496,57 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
 		end
 
 		if fields.delete then
-		      if youaretheboss then                                      -- Sorry I couldn't resist :D
-			poi.delete(player:get_player_name(),selected_point)
+			-- FIX(poi-perplayer): upstream made the trash button admin-only ("couldn't
+			-- resist :D"), which in a per-player fork means players cannot delete
+			-- their OWN POIs from the GUI at all. Deletion is now delegated to
+			-- poi.delete, whose per-player layer refuses shared/foreign POIs
+			-- ("Shared POIs are read-only") and allows own ones for everyone.
+			poi.delete(player:get_player_name(),gs.selected_point)
+			gs.selected_point = ""
+			gs.choosen_name = 0
 			poi.gui(player:get_player_name(), nil, false)
-		      else
-			poi.print(player:get_player_name(),S(" >>> Sorry this button is for admin only, please use /poi_delete ")..selected_point,red)
-		      end
 		end
 
 		if fields.move then
-			poi.move(player:get_player_name(),selected_point)
+			if gs.selected_point ~= "" then
+				poi.move(player:get_player_name(),gs.selected_point)
+			end
 			poi.gui(player:get_player_name(), nil, false)
 
 		end
 
 		if fields.rename then
-			poi.rename(player:get_player_name(),selected_point..","..fields.managename)
+			if gs.selected_point ~= "" and fields.managename ~= nil then
+				poi.rename(player:get_player_name(),gs.selected_point..","..fields.managename)
+			end
 			poi.gui(player:get_player_name(), nil, false)
 		end
 
 		if fields.managename then
-			choosen_name = 0
-			selected_point = fields.managename
+			gs.choosen_name = 0
+			gs.selected_point = fields.managename
 			poi.gui(player:get_player_name(), nil, false)
 		end
 
 		if fields.set then
-			poi.set(player:get_player_name(), selected_point..","..selected_category)
-			selected_category = 0
-			choosen_name = 0
-			selected_point = ""
+			if gs.selected_point ~= "" or gs.selected_category ~= 0 then
+				poi.set(player:get_player_name(), gs.selected_point..","..gs.selected_category)
+				gs.selected_category = 0
+				gs.choosen_name = 0
+				gs.selected_point = ""
+			end
 			poi.gui(player:get_player_name(), nil, false)
 		end
 
-		if (event.type == "CHG") and event.index then              -- save the last choosen poi
-		    selected_point = call_list[event.index]
-		    choosen_name = event.index
-		    selected_category = poi.get_categorie(selected_point)
+		if (event.type == "CHG") and event.index and gs.call_list[event.index] then              -- save the last choosen poi
+		    gs.selected_point = gs.call_list[event.index]
+		    gs.choosen_name = event.index
+		    gs.selected_category = poi.get_categorie(gs.selected_point) or 0
 		    poi.gui(player:get_player_name(), nil, false)
 		end
 
 		if (catevent.type == "CHG") and catevent.index then              -- save the last choosen category
-		    selected_category = catevent.index
+		    gs.selected_category = catevent.index
 		    poi.gui(player:get_player_name(), nil, false)
 		end
 	end
@@ -1097,11 +1117,367 @@ if (minetest.get_modpath("unified_inventory")) then
 	})
 end
 
+
+--[[
+	********************************************
+	***   poi_perplayer layer (fork patch)    ***
+	***   Each player owns their own POIs.    ***
+	***   Storage keys: "name@owner". Bare    ***
+	***   keys listed in poi.perplayer_global ***
+	***   are shared, read-only for everyone. ***
+	***   View = bare keys (globals + own);   ***
+	***   owner-mapping happens in save().    ***
+	********************************************
+--]]
+
+local o_openlist = poi.openlist
+local o_save = poi.save
+local o_list = poi.list
+local o_set = poi.set
+local o_delete = poi.delete
+local o_jump = poi.jump
+local o_move = poi.move
+local o_rename = poi.rename
+local o_gui = poi.gui
+
+PPL = {
+	current = nil,         -- player whose view is currently active in poi.points
+	storage_snapshot = {}, -- full storage fields {key=raw_value}
+	shadowed = {},         -- global keys shadowed by own POI in current view
+	global_vals = {},      -- raw values of those globals (restored on save)
+}
+
+PPL.global_names = {}
+PPL.settings_globals = {} -- declared via poi.perplayer_global: removable only via config
+do
+	local raw = minetest.settings:get("poi.perplayer_global") or "init_spawn"
+	for item in raw:gmatch("[^,]+") do
+		local n = item:match("^%s*(.-)%s*$")
+		if n ~= "" then
+			PPL.global_names[n] = true
+			PPL.settings_globals[n] = true
+		end
+	end
+end
+PPL.default_owner = minetest.settings:get("poi.perplayer_default_owner") or "spluft"
+
+PPL.promoted = {} -- runtime-promoted globals: [name] = promoter
+
+function PPL.promoted_list_string()
+	local keys = {}
+	for k in pairs(PPL.promoted) do keys[#keys + 1] = k end
+	table.sort(keys)
+	local out = {}
+	for i, k in ipairs(keys) do out[i] = k .. "=" .. PPL.promoted[k] end
+	return table.concat(out, ",")
+end
+
+function PPL.is_global(key)
+	return PPL.global_names[key] == true
+end
+
+function PPL.is_owned_by(key, name)
+	local suffix = "@" .. name
+	return string.sub(key, -#suffix) == suffix
+end
+
+-- one-time in-memory migration: legacy unprefixed keys -> default_owner
+function PPL.migrate()
+	local changed = false
+	for k in pairs(PPL.storage_snapshot) do
+		if not PPL.is_global(k) and not string.find(k, "@", 1, true)
+				and string.sub(k, 1, 1) ~= "_" then
+			PPL.storage_snapshot[k .. "@" .. PPL.default_owner] =
+				PPL.storage_snapshot[k]
+			PPL.storage_snapshot[k] = nil
+			changed = true
+		end
+	end
+	if changed then
+		storage:from_table({fields = PPL.storage_snapshot})
+		minetest.log("action", "[POI] perplayer migration done, owner=" .. PPL.default_owner)
+	end
+end
+
+function poi.openlist()
+	o_openlist() -- keep original behavior for poi.reload()
+	local t = storage:to_table()
+	PPL.storage_snapshot = t.fields or {}
+	PPL.current = nil
+	-- restore runtime-promoted globals before migration claims their bare keys
+	local raw = PPL.storage_snapshot["_pp_globals"]
+	if type(raw) == "string" then
+		for item in raw:gmatch("[^,]+") do
+			local n, owner = item:match("^%s*([^=@]+)%s*=%s*([^,%s]+)")
+			n = n and n:match("^%s*(.-)%s*$")
+			if n and n ~= "" and owner and not PPL.is_global(n) then
+				PPL.global_names[n] = true
+				PPL.promoted[n] = owner
+			end
+		end
+	end
+	PPL.migrate()
+	poi.points = {} -- empty view until a player context is set
+end
+
+-- read-modify-write flush: rebuild full table from storage,
+-- drop current player's slice, rewrite it from the bare-key view
+function poi.save()
+	local full = (storage:to_table()).fields or {}
+	for k, v in pairs(PPL.storage_snapshot) do full[k] = v end
+	if PPL.current then
+		for k in pairs(full) do
+			if PPL.is_owned_by(k, PPL.current) then full[k] = nil end
+		end
+		for k, v in pairs(poi.points) do
+			if PPL.is_global(k) then
+				if PPL.shadowed[k] then
+					-- own POI shadows this global: keep global value intact,
+					-- store own value under owned key
+					full[k] = PPL.global_vals[k]
+					full[k .. "@" .. PPL.current] = v
+				else
+					full[k] = v -- genuine write (e.g. right after promote)
+				end
+			elseif string.find(k, "@", 1, true) then
+				full[k] = v -- explicit owned key
+			else
+				full[k .. "@" .. PPL.current] = v
+			end
+		end
+		full["_pp_globals"] = PPL.promoted_list_string()
+	end
+	storage:from_table({fields = full})
+	PPL.storage_snapshot = full
+end
+
+-- switch poi.points to the view of `name`: globals first, own keys shadow them
+function PPL.view(name)
+	if PPL.current == name then return end
+	local view, shadowed, gvals = {}, {}, {}
+	for k, v in pairs(PPL.storage_snapshot) do
+		if PPL.is_global(k) then
+			view[k] = v
+			gvals[k] = v
+		end
+	end
+	for k, v in pairs(PPL.storage_snapshot) do
+		local at = string.find(k, "@", 1, true)
+		if at then
+			local base = string.sub(k, 1, at - 1)
+			local owner = string.sub(k, at + 1)
+			if owner == name then
+				if PPL.global_names[base] then
+					shadowed[base] = true
+					gvals[base] = gvals[base] or view[base]
+				end
+				view[base] = v
+			end
+		end
+	end
+	poi.points = view
+	PPL.shadowed = shadowed
+	PPL.global_vals = gvals
+	PPL.current = name
+end
+
+function poi.exist(poi_name)
+	if poi_name == nil or poi_name == "" then return false end
+	return poi.points[poi_name] ~= nil
+end
+
+function poi.list(name, option)
+	PPL.view(name)
+	option = string.lower(option or "")
+	local count = 0
+	for key, value in poi.spairs(poi.points) do
+		count = count + 1
+		if string.find(option, "-a", 1, true) ~= nil then
+			local pos = poi.split_pos_cat(value)
+			poi.print(name, key .. ": " .. pos .. " " ..
+				poi.get_categoriename(poi.get_categorie(key)), green)
+		end
+	end
+	poi.print(name, count .. S(" Points in your list (yours + shared)."), green)
+end
+
+function poi.set(name, poi_name)
+	PPL.view(name)
+	return o_set(name, poi_name) -- o_set -> poi.save() (patched) maps bare -> owned
+end
+
+function poi.delete(name, poi_name)
+	PPL.view(name)
+	if poi_name ~= nil and poi_name ~= "" and PPL.is_global(poi_name) then
+		-- FIX(poi-perplayer): admins manage shared POIs (the GUI trash is their
+		-- management surface now); players keep read-only. POIs declared in
+		-- poi.perplayer_global config stay removable only via config — even by
+		-- admins — so config and storage never disagree.
+		if PPL.settings_globals[poi_name] then
+			poi.print(name, "This POI is shared via config; remove it from poi.perplayer_global to delete it.", red)
+			return false
+		end
+		if not minetest.get_player_privs(name).server then
+			poi.print(name, "Shared POIs are read-only for players. Ask an admin (or /poi_global to list shared).", red)
+			return false
+		end
+		-- admin deleting a promoted POI: drop the promotion, then delete for real
+		PPL.global_names[poi_name] = nil
+		PPL.promoted[poi_name] = nil
+		local ok = o_delete(name, poi_name)
+		if ok then
+			local full = (storage:to_table()).fields or {}
+			full[poi_name] = nil -- drop the bare key: save() cannot remove bare globals
+			full["_pp_globals"] = PPL.promoted_list_string()
+			storage:from_table({fields = full})
+			PPL.storage_snapshot = full
+		end
+		return ok
+	end
+	return o_delete(name, poi_name)
+end
+
+function poi.jump(name, poi_name)
+	PPL.view(name)
+	return o_jump(name, poi_name)
+end
+
+function poi.move(name, poi_name)
+	PPL.view(name)
+	if poi_name ~= nil and poi_name ~= "" and PPL.is_global(poi_name) then
+		poi.print(name, "Shared POIs are read-only for players.", red)
+		return false
+	end
+	return o_move(name, poi_name)
+end
+
+function poi.rename(name, poi_name)
+	PPL.view(name)
+	local oldname = poi_name
+	if string.find(poi_name, ",", 1, true) ~= nil then
+		oldname = string.sub(poi_name, 1, string.find(poi_name, ",", 1, true) - 1)
+		oldname = oldname:match("^%s*(.-)%s*$")
+	end
+	if oldname ~= nil and PPL.is_global(oldname) then
+		poi.print(name, "Shared POIs are read-only for players.", red)
+		return false
+	end
+	return o_rename(name, poi_name)
+end
+
+function poi.gui(player_name, showup, main)
+	PPL.view(player_name)
+	return o_gui(player_name, showup, main)
+end
+
+--[[
+	/poi_global          - list shared POIs            (admin only: privs.server)
+	/poi_global <name>   - promote POI to shared (read-only for players);
+	                       run again to un-share. Personal POI commands keep
+	                       the stock poi priv - sharing is an admin decision.
+--]]
+minetest.register_chatcommand("poi_global", {
+	params = S("[Name]"),
+	description = S("Admin only. Share a POI with everyone (read-only for players)."
+		.. " Without argument: list shared POIs."),
+	privs = {server = true},
+	func = function(name, param)
+		param = (param or ""):match("^%s*(.-)%s*$")
+		if param == "" then
+			local cfg, promo = {}, {}
+			for k in pairs(PPL.global_names) do
+				if PPL.settings_globals[k] then cfg[#cfg + 1] = k
+				else promo[#promo + 1] = k end
+			end
+			table.sort(cfg); table.sort(promo)
+			poi.print(name, S("Shared POIs:"), green)
+			for _, k in ipairs(cfg) do
+				poi.print(name, "  " .. k .. " (config: poi.perplayer_global)", '#FFCC00')
+			end
+			for _, k in ipairs(promo) do
+				poi.print(name, "  " .. k .. " (shared by " .. tostring(PPL.promoted[k])
+					.. ", un-share: /poi_global " .. k .. ")", '#FFCC00')
+			end
+			if #cfg == 0 and #promo == 0 then
+				poi.print(name, S("  none yet"), '#FFCC00')
+			end
+			return true
+		end
+		PPL.view(name)
+		if not PPL.is_global(param) then
+			if not poi.exist(param) then
+				poi.print(name, S("Unknown POI: ") .. param, red)
+				return false
+			end
+			if PPL.shadowed[param] then
+				poi.print(name, S("A shared POI named '") .. param
+					.. S("' already exists - rename yours first."), red)
+				return false
+			end
+			-- promote own POI: view keeps bare key (now global), save() maps it
+			PPL.global_names[param] = true
+			PPL.promoted[param] = name
+			poi.save()
+			minetest.log("action", "[POI] " .. name .. " shared POI '" .. param .. "' globally")
+			poi.print(name, S("POI '") .. param
+				.. S("' is now shared with everyone (read-only for players)."), green)
+			poi.print(name, "Run the same command again to un-share it.", '#FFCC00')
+			return true
+		end
+		-- un-share path
+		if PPL.settings_globals[param] then
+			poi.print(name, S("Managed by poi.perplayer_global config: remove it there instead."), red)
+			return false
+		end
+		-- caller necessarily has server priv (enforced by command privs).
+		-- the POI returns to whoever promoted it, not the admin caller.
+		local promoter = PPL.promoted[param] or name
+		local raw = PPL.global_vals[param]
+		if raw == nil then
+			local t = storage:to_table().fields or {}
+			raw = t[param] or poi.points[param]
+		end
+		if raw == nil then
+			poi.print(name, S("Internal: shared key not found: ") .. param, red)
+			return false
+		end
+		local full = storage:to_table().fields or {}
+		full[param] = nil
+		full[param .. "@" .. promoter] = raw
+		PPL.global_names[param] = nil
+		PPL.promoted[param] = nil
+		PPL.current = nil -- save() without player slice: persist demotion as-is
+		full["_pp_globals"] = PPL.promoted_list_string()
+		storage:from_table({fields = full})
+		PPL.storage_snapshot = full
+		PPL.view(name) -- rebuild view: caller now owns the POI
+		minetest.log("action", "[POI] " .. name .. " un-shared POI '" .. param
+			.. "' (returned to " .. promoter .. ")")
+		if promoter == name then
+			poi.print(name, S("POI '") .. param .. S("' is yours again (private)."), green)
+		else
+			poi.print(name, S("POI '") .. param .. S("' returned to ") .. promoter
+				.. S("'s private list."), green)
+		end
+		return true
+	end,
+})
+
+do
+	local n = 0
+	for _ in pairs(PPL.global_names) do n = n + 1 end
+	print("[MOD] poi_perplayer layer loaded: " .. n .. " shared global POI(s), legacy owner = " .. PPL.default_owner)
+end
+
 --[[
 	********************************************
 	***           Start of the Mod                     ***
 	********************************************
 --]]
+
+minetest.register_on_leaveplayer(function(player)
+	gui_state[player:get_player_name()] = nil
+end)
 
 poi.openlist() -- Initalize the List on Start
 poi.filter = poi_namefilter
